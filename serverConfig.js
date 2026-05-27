@@ -1,7 +1,7 @@
 const pool = require("../database/pool");
 
 // 🔹 환경 변수
-const ROLE = process.env.SERVER_ROLE || "MASTER";
+const ROLE = process.env.SERVER_ROLE || "SLAVE";
 const SERVER_ID = process.env.SERVER_ID || "SERVER_2";
 const API_TOKEN = process.env.API_TOKEN || "SECRET_KEY";
 
@@ -61,11 +61,23 @@ async function loadConfig() {
 /**
  * 🔹 last sync 조회
  */
-async function getLastSync() {
-  const [rows] = await pool.query(
-    "SELECT last_sync FROM sync_status WHERE server_id = ?",
-    [SERVER_ID]
-  );
+async function getLastSync(
+  table
+) {
+
+  const [rows] =
+    await pool.query(
+      `
+      SELECT last_sync
+      FROM sync_status
+      WHERE server_id = ?
+      AND table_name = ?
+      `,
+      [
+        SERVER_ID,
+        table
+      ]
+    );
 
   return rows.length
     ? rows[0].last_sync
@@ -75,13 +87,26 @@ async function getLastSync() {
 /**
  * 🔹 last sync 갱신
  */
-async function updateLastSync() {
+async function updateLastSync(
+  table,
+  syncTime
+) {
+
   await pool.query(`
-    INSERT INTO sync_status (server_id, last_sync)
-    VALUES (?, NOW())
+    INSERT INTO sync_status
+    (
+      server_id,
+      table_name,
+      last_sync
+    )
+    VALUES (?, ?, ?)
     ON DUPLICATE KEY UPDATE
-      last_sync = NOW()
-  `, [SERVER_ID]);
+      last_sync = VALUES(last_sync)
+  `, [
+    SERVER_ID,
+    table,
+    syncTime
+  ]);
 }
 
 module.exports = {

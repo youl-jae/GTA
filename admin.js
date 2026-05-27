@@ -2,6 +2,9 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../database/pool");
 
+const fs = require("fs");
+const path = require("path");
+
 const crypto = require("crypto");
 const rateLimit = require("express-rate-limit");
 const axios = require("axios");
@@ -16,187 +19,330 @@ const {
   updateLastSync
 } = require("./serverConfig");
 
-// =====================================
-// 🔥 Table Sync Config
-// =====================================
-const TABLE_SYNC_CONFIG = {
+// allowed ip 목록 조회
+router.get(
+  "/allowed-ips",
+  async (req, res) => {
 
-  // =====================================
-  // MASTER DATA
-  // business key 기반 full sync
-  // =====================================
-  project: {
-    enabled: true,
-    order: 1,
-    mode: "business",
-    businessKeys: ["name"]
-  },
+    try {
 
-  app: {
-    enabled: true,
-    order: 2,
-    mode: "business",
-    businessKeys: ["name"]
-  },
+      const [rows] =
+        await pool.query(`
+          SELECT
+            ip,
+            description
+          FROM allowed_ips
+          WHERE enabled = 1
+          ORDER BY id ASC
+        `);
 
-  chip: {
-    enabled: true,
-    order: 3,
-    mode: "business",
-    businessKeys: ["name"]
-  },
+      res.json(rows);
 
-  power_rail: {
-    enabled: false,
-    order: 4,
-    mode: "business",
-    businessKeys: ["name"]
-  },
+    } catch (err) {
 
-  test_group: {
-    enabled: true,
-    order: 5,
-    mode: "business",
-    businessKeys: ["name"]
-  },
+      console.error(err);
 
-  roles: {
-    enabled: false,
-    order: 6,
-    mode: "business",
-    businessKeys: ["name"]
-  },
-
-  // =====================================
-  // UUID SYNC TABLE
-  // =====================================
-  users: {
-    enabled: false,
-    order: 10,
-    mode: "uuid"
-  },
-
-  comparison: {
-    enabled: false,
-    order: 11,
-    mode: "uuid"
-  },
-
-  ip: {
-    enabled: true,
-    order: 20,
-    mode: "business",
-    businessKeys: ["name"]
-  },
-
-  app_testcase: {
-    enabled: true,
-    order: 21,
-    mode: "business",
-    businessKeys: ["app_id", "name"]
-  },
-
-  chip_info: {
-    enabled: true,
-    order: 22,
-    mode: "business",
-    businessKeys: ["chip_id", "ip_id"]
-  },
-
-  project_power_rail: {
-    enabled: false,
-    order: 23,
-    mode: "uuid"
-  },
-
-  user_roles: {
-    enabled: false,
-    order: 24,
-    mode: "uuid"
-  },
-
-  test: {
-    enabled: true,
-    order: 30,
-    mode: "uuid"
-  },
-
-  testitem: {
-    enabled: false,
-    order: 31,
-    mode: "uuid"
-  },
-
-  benchmark_score: {
-    enabled: false,
-    order: 40,
-    mode: "uuid"
-  },
-
-  game_score: {
-    enabled: false,
-    order: 41,
-    mode: "uuid"
-  },
-
-  performance_efficiency: {
-    enabled: false,
-    order: 42,
-    mode: "uuid"
-  },
-
-  power: {
-    enabled: false,
-    order: 43,
-    mode: "uuid"
-  },
-
-  comparison_aiagent: {
-    enabled: false,
-    order: 50,
-    mode: "uuid"
-  },
-
-  comparison_test: {
-    enabled: false,
-    order: 51,
-    mode: "uuid"
-  },
-
-  // =====================================
-  // LOCAL ONLY
-  // =====================================
-  allowed_ips: {
-    enabled: false
-  },
-
-  server_config: {
-    enabled: false
-  },
-
-  sync_status: {
-    enabled: false
-  },
-
-  Test: {
-    enabled: false
-  },
-
-  TestItem: {
-    enabled: false
+      res
+        .status(500)
+        .json({
+          message:
+            "Failed to load allowed ips"
+        });
+    }
   }
-};
+);
+
+router.post(
+  "/allowed-ips",
+  async (req, res) => {
+
+    try {
+
+      const {
+        ip,
+        description
+      } = req.body;
+
+      await pool.query(`
+        INSERT INTO allowed_ips
+        (
+          ip,
+          description,
+          enabled
+        )
+        VALUES (?, ?, 1)
+        ON DUPLICATE KEY UPDATE
+          enabled = 1,
+          description = VALUES(description)
+      `, [
+        ip,
+        description
+      ]);
+
+      res.json({
+        success: true
+      });
+
+    } catch (err) {
+
+      console.error(err);
+
+      res.status(500).json({
+        message:
+          "Failed to add allowed ip"
+      });
+    }
+  }
+);
+
+router.put(
+  "/allowed-ips/:oldIp",
+  async (req, res) => {
+
+    try {
+
+      const { oldIp } = req.params;
+
+      const {
+        ip,
+        description
+      } = req.body;
+
+      await pool.query(`
+        UPDATE allowed_ips
+        SET
+          ip = ?,
+          description = ?
+        WHERE ip = ?
+      `, [
+        ip,
+        description,
+        oldIp
+      ]);
+
+      res.json({
+        success: true
+      });
+
+    } catch (err) {
+
+      console.error(err);
+
+      res.status(500).json({
+        message:
+          "Failed to modify allowed ip"
+      });
+    }
+  }
+);
+
+router.delete(
+  "/allowed-ips/:ip",
+  async (req, res) => {
+
+    try {
+
+      const { ip } =
+        req.params;
+
+      await pool.query(`
+        UPDATE allowed_ips
+        SET enabled = 0
+        WHERE ip = ?
+      `, [ip]);
+
+      res.json({
+        success: true
+      });
+
+    } catch (err) {
+
+      console.error(err);
+
+      res.status(500).json({
+        message:
+          "Failed to delete allowed ip"
+      });
+    }
+  }
+);
 
 // =====================================
-// 🔥 Sync Tables
+// 🔥 GET SERVER ROLE
 // =====================================
-const SYNC_TABLES =
-  Object.entries(TABLE_SYNC_CONFIG)
-    .filter(([_, cfg]) => cfg.enabled)
+router.get(
+  "/server-role",
+  (req, res) => {
+
+    return res.json({
+      role: ROLE
+    });
+  }
+);
+
+// =====================================
+// 🔥 Table Sync Config File
+// =====================================
+const TABLE_SYNC_CONFIG_PATH =
+  path.join(
+    __dirname,
+    "../config/table-sync-config.json"
+  );
+
+router.get(
+  "/table-sync-config",
+  (req, res) => {
+
+    try {
+
+      const config = JSON.parse(
+        fs.readFileSync(
+          TABLE_SYNC_CONFIG_PATH,
+          "utf8"
+        )
+      );
+
+      const result =
+        Object.entries(config)
+          .map(([table, value]) => ({
+
+            table,
+
+            enabled:
+              value.enabled ?? false,
+
+            order:
+              value.order ?? 9999,
+          }))
+          .sort(
+            (a, b) =>
+              a.order - b.order
+          );
+
+      res.json(result);
+
+    } catch (err) {
+
+      console.error(err);
+
+      res.status(500).json({
+        error:
+          "failed to load config"
+      });
+    }
+  }
+);
+
+router.post(
+  "/table-sync-config",
+  (req, res) => {
+
+    try {
+
+      const updates = req.body;
+
+      const config = JSON.parse(
+        fs.readFileSync(
+          TABLE_SYNC_CONFIG_PATH,
+          "utf8"
+        )
+      );
+
+      for (const item of updates) {
+
+        if (!config[item.table]) {
+          continue;
+        }
+
+        config[item.table].enabled =
+          item.enabled;
+      }
+
+      fs.writeFileSync(
+        TABLE_SYNC_CONFIG_PATH,
+        JSON.stringify(
+          config,
+          null,
+          2
+        )
+      );
+
+      loadConfig();
+
+      res.json({
+        success: true
+      });
+
+    } catch (err) {
+
+      console.error(err);
+
+      res.status(500).json({
+        error:
+          "failed to save config"
+      });
+    }
+  }
+);
+
+// =====================================
+// 🔥 Load Table Sync Config
+// =====================================
+let cachedTableSyncConfig = null;
+
+function loadTableSyncConfig() {
+
+  if (cachedTableSyncConfig) {
+    return cachedTableSyncConfig;
+  }
+
+  const raw = fs.readFileSync(
+    TABLE_SYNC_CONFIG_PATH,
+    "utf8"
+  );
+
+  cachedTableSyncConfig =
+    JSON.parse(raw);
+
+  return cachedTableSyncConfig;
+}
+
+// =====================================
+// 🔥 Save Table Sync Config
+// =====================================
+function saveTableSyncConfig(config) {
+
+  fs.writeFileSync(
+    TABLE_SYNC_CONFIG_PATH,
+    JSON.stringify(
+      config,
+      null,
+      2
+    )
+  );
+
+  cachedTableSyncConfig =
+    config;
+}
+// =====================================
+// 🔥 Get Sync Tables
+// =====================================
+function getSyncTables() {
+
+  const config =
+    loadTableSyncConfig();
+
+  return Object.entries(config)
+    .filter(([_, cfg]) =>
+      cfg.enabled
+    )
     .sort(
-      (a, b) => a[1].order - b[1].order
+      (a, b) =>
+        (a[1].order || 0) -
+        (b[1].order || 0)
     )
     .map(([table]) => table);
+}
 
 // =====================================
 // 🔥 Required Columns
@@ -256,6 +402,12 @@ async function validateSyncSchema() {
   console.log(
     "[SYNC] validate schema start"
   );
+
+  const TABLE_SYNC_CONFIG =
+    loadTableSyncConfig();
+
+  const SYNC_TABLES =
+    getSyncTables();
 
   for (const table of SYNC_TABLES) {
 
@@ -617,6 +769,12 @@ async function upsertRows(
   rows
 ) {
 
+  const TABLE_SYNC_CONFIG =
+    loadTableSyncConfig();
+
+  const config =
+    TABLE_SYNC_CONFIG[table];
+
   if (
     !rows ||
     rows.length === 0
@@ -630,9 +788,6 @@ ROWS=0
 
     return;
   }
-
-  const config =
-    TABLE_SYNC_CONFIG[table];
 
   console.log(`
 =====================================
@@ -749,10 +904,13 @@ STATUS=${failCount === 0 ? "SUCCESS" : "FAIL"}
 //   incremental sync
 // =====================================
 async function getChangedRows(
-  lastSync
+  lastSyncMap
 ) {
 
   const result = {};
+
+  const SYNC_TABLES =
+    getSyncTables();
 
   for (const table of SYNC_TABLES) {
 
@@ -762,6 +920,10 @@ async function getChangedRows(
         `[READ] ${table}`
       );
 
+      const tableLastSync =
+        lastSyncMap?.[table] ||
+        "1970-01-01 00:00:00";
+
       const sql = `
         SELECT *
         FROM ${table}
@@ -769,12 +931,10 @@ async function getChangedRows(
         ORDER BY updated_at ASC
       `;
 
-      const params = [lastSync];
-
       const [rows] =
         await pool.query(
           sql,
-          params
+          [tableLastSync]
         );
 
       result[table] = rows;
@@ -812,9 +972,17 @@ async function verifyRequest(req) {
       ""
     );
 
-  if (
-    !config.allowedIPs.includes(clientIP)
-  ) {
+  const [rows] =
+    await pool.query(`
+      SELECT id
+      FROM allowed_ips
+      WHERE ip = ?
+      AND enabled = 1
+      LIMIT 1
+    `, [clientIP]);
+
+  if (rows.length === 0) {
+
     return "Blocked IP";
   }
 
@@ -947,8 +1115,60 @@ router.post(
 
       // =====================================
       // MASTER
+      // - Handle sync request from Slave
+      // - Receive Slave changes
+      // - Return Master changes
       // =====================================
       if (ROLE === "MASTER") {
+
+        // =====================================
+        // MASTER MANUAL SYNC
+        // - Master triggers sync on Slave
+        // - Slave starts bidirectional sync
+        // =====================================
+        if (
+          !req.headers.authorization &&
+          !req.body.internalSync
+        ) {
+
+          const { targetUrl } =
+            req.body;
+
+          if (!targetUrl) {
+
+            return res
+              .status(400)
+              .send("Missing targetUrl");
+          }
+
+          console.log(`
+        [MASTER PUSH SYNC]
+        TARGET=${targetUrl}
+          `);
+
+          const response =
+            await axios.post(
+              `${targetUrl}/api/admin/sync`,
+              {
+                masterUrl:
+                  MASTER_URL,
+
+                internalSync: true
+              },
+              {
+                timeout: 300000,
+                proxy: false
+              }
+            );
+
+          return res.json({
+            success: true,
+            target: targetUrl,
+            result:
+              response.data
+          });
+        }
+
 
         const error =
           await verifyRequest(req);
@@ -962,8 +1182,8 @@ router.post(
 
         const {
           data,
-          lastSync:
-            slaveLastSync
+          lastSyncMap:
+            slaveLastSyncMap
         } = req.body;
 
         conn =
@@ -971,8 +1191,16 @@ router.post(
 
         await conn.beginTransaction();
 
+        const TABLE_SYNC_CONFIG =
+          loadTableSyncConfig();
+
+        const SYNC_TABLES =
+          getSyncTables();
+
         // =====================================
-        // Slave -> Master
+        // Receive changed rows from Slave
+        // Sync Direction:
+        //   Slave -> Master
         // =====================================
         for (const table of SYNC_TABLES) {
 
@@ -1031,23 +1259,30 @@ router.post(
         await conn.commit();
 
         // =====================================
-        // Master -> Slave
+        // Return changed rows to Slave
+        // Sync Direction:
+        //   Master -> Slave
         // =====================================
         const syncData =
           await getChangedRows(
-            slaveLastSync
+            slaveLastSyncMap
           );
 
         return res.json({
           success: true,
           data: syncData,
           serverTime:
-            new Date().toISOString()
+            new Date()
+              .toISOString()
+              .slice(0, 19)
+              .replace("T", " ")
         });
       }
 
       // =====================================
       // SLAVE
+      // - Send local changes to Master
+      // - Receive latest changes from Master
       // =====================================
       if (ROLE === "SLAVE") {
 
@@ -1058,17 +1293,31 @@ router.post(
           requestMasterUrl ||
           MASTER_URL;
 
-        const lastSync =
-          await getLastSync();
+        const SYNC_TABLES =
+          getSyncTables();
 
+        const lastSyncMap = {};
+
+        for (const table of SYNC_TABLES) {
+
+          lastSyncMap[table] =
+            await getLastSync(
+              table
+            );
+        }
+
+        // =====================================
+        // Read local changed rows
+        // to upload to Master
+        // =====================================
         const localData =
           await getChangedRows(
-            lastSync
+            lastSyncMap
           );
 
         const payloadObj = {
           data: localData,
-          lastSync,
+          lastSyncMap,
           timestamp: Date.now()
         };
 
@@ -1086,6 +1335,11 @@ router.post(
           .digest("hex");
 
         const response =
+          // =====================================
+          // Send Slave changes to Master
+          // Sync Direction:
+          //   Slave -> Master
+          // =====================================
           await axios.post(
             `${masterUrl}/api/admin/sync`,
             payloadObj,
@@ -1111,7 +1365,9 @@ router.post(
         await conn.beginTransaction();
 
         // =====================================
-        // Master -> Slave
+        // Apply changed rows from Master
+        // Sync Direction:
+        //   Master -> Slave
         // =====================================
         for (const table of SYNC_TABLES) {
 
@@ -1169,7 +1425,16 @@ router.post(
 
         await conn.commit();
 
-        await updateLastSync();
+        const syncTime =
+          response.data.serverTime;
+
+        for (const table of SYNC_TABLES) {
+
+          await updateLastSync(
+            table,
+            syncTime
+          );
+        }
 
         return res.send(
           "Sync Success"

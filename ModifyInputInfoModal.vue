@@ -14,7 +14,12 @@
           />
 
           <div style="display: flex; align-items: center; gap: 6px;">
-            <b-button size="sm" variant="primary" @click="addHost">
+            <b-button
+              size="sm"
+              variant="primary"
+              @click="addHost"
+              :disabled="serverRole === 'SLAVE'"
+            >
               Add
             </b-button>
 
@@ -22,7 +27,12 @@
               Modify
             </b-button>
 
-            <b-button size="sm" variant="primary" @click="deleteHost">
+            <b-button
+              size="sm"
+              variant="primary"
+              @click="deleteHost"
+              :disabled="serverRole === 'SLAVE'"
+            >
               Delete
             </b-button>
           </div>
@@ -62,6 +72,12 @@ export default {
   props: {
     host: String,
     hostOptions: Array,
+
+    // 추가
+    serverRole: {
+      type: String,
+      default: "",
+    },
   },
 
   data() {
@@ -132,6 +148,10 @@ export default {
     // Host 추가
     addHost() {
 
+      if (this.serverRole === "SLAVE") {
+        return;
+      }
+
       this.modifyName = "";
       this.modifyIp = "";
 
@@ -141,46 +161,112 @@ export default {
     },
 
     // Host 삭제
-    deleteHost() {
+    async deleteHost() {
 
-      this.localHostOptions =
-        this.localHostOptions.filter(
-          (h) => h.value !== this.localHost
+      if (this.serverRole === "SLAVE") {
+        return;
+      }
+
+      try {
+
+        await this.$http.delete(
+          `/api/admin/allowed-ips/${this.localHost}`
         );
 
-      this.localHost =
-        this.localHostOptions[0]?.value || "";
+        this.localHostOptions =
+          this.localHostOptions.filter(
+            (h) =>
+              h.value !== this.localHost
+          );
+
+        this.localHost =
+          this.localHostOptions[0]?.value || "";
+
+      } catch (err) {
+
+        console.error(err);
+
+        alert(
+          "Host 삭제 실패"
+        );
+      }
     },
 
     // Add / Modify 완료
-    onModifyHostOk() {
+    async onModifyHostOk() {
 
-      const newItem = {
-        value: this.modifyIp,
-        text: `${this.modifyName} (${this.modifyIp})`,
-      };
+      try {
 
-      if (this.isAddMode) {
+        const payload = {
 
-        this.localHostOptions.push(newItem);
+          ip: this.modifyIp,
 
-      } else {
+          description:
+            this.modifyName,
+        };
 
-        const index =
-          this.localHostOptions.findIndex(
-            (h) => h.value === this.localHost
+        // ADD
+        if (this.isAddMode) {
+
+          await this.$http.post(
+            "/api/admin/allowed-ips",
+            payload
           );
 
-        if (index !== -1) {
-          this.$set(
-            this.localHostOptions,
-            index,
-            newItem
+        }
+
+        // MODIFY
+        else {
+
+          await this.$http.put(
+            `/api/admin/allowed-ips/${this.localHost}`,
+            payload
           );
         }
-      }
 
-      this.localHost = newItem.value;
+        const newItem = {
+
+          value: this.modifyIp,
+
+          text:
+            `${this.modifyName} (${this.modifyIp})`,
+        };
+
+        if (this.isAddMode) {
+
+          this.localHostOptions.push(
+            newItem
+          );
+
+        } else {
+
+          const index =
+            this.localHostOptions.findIndex(
+              (h) =>
+                h.value === this.localHost
+            );
+
+          if (index !== -1) {
+
+            this.$set(
+              this.localHostOptions,
+              index,
+              newItem
+            );
+          }
+        }
+
+        this.localHost =
+          newItem.value;
+
+      } catch (err) {
+
+        console.error(err);
+
+        alert(
+          "Host 저장 실패"
+        );
+      }
     },
   },
 };

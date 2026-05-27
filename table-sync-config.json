@@ -1,0 +1,156 @@
+{
+  "project": {
+    "enabled": true,
+    "order": 1,
+    "mode": "business",
+    "businessKeys": ["name"]
+  },
+
+  "app": {
+    "enabled": true,
+    "order": 2,
+    "mode": "business",
+    "businessKeys": ["name"]
+  },
+
+  "chip": {
+    "enabled": true,
+    "order": 3,
+    "mode": "business",
+    "businessKeys": ["name"]
+  },
+
+  "power_rail": {
+    "enabled": false,
+    "order": 4,
+    "mode": "business",
+    "businessKeys": ["name"]
+  },
+
+  "test_group": {
+    "enabled": true,
+    "order": 5,
+    "mode": "business",
+    "businessKeys": ["name"]
+  },
+
+  "roles": {
+    "enabled": false,
+    "order": 6,
+    "mode": "business",
+    "businessKeys": ["name"]
+  },
+
+  "users": {
+    "enabled": false,
+    "order": 10,
+    "mode": "uuid"
+  },
+
+  "comparison": {
+    "enabled": false,
+    "order": 11,
+    "mode": "uuid"
+  },
+
+  "ip": {
+    "enabled": true,
+    "order": 20,
+    "mode": "business",
+    "businessKeys": ["name"]
+  },
+
+  "app_testcase": {
+    "enabled": true,
+    "order": 21,
+    "mode": "business",
+    "businessKeys": ["app_id", "name"]
+  },
+
+  "chip_info": {
+    "enabled": true,
+    "order": 22,
+    "mode": "business",
+    "businessKeys": ["chip_id", "ip_id"]
+  },
+
+  "project_power_rail": {
+    "enabled": false,
+    "order": 23,
+    "mode": "uuid"
+  },
+
+  "user_roles": {
+    "enabled": false,
+    "order": 24,
+    "mode": "uuid"
+  },
+
+  "test": {
+    "enabled": true,
+    "order": 30,
+    "mode": "uuid"
+  },
+
+  "testitem": {
+    "enabled": false,
+    "order": 31,
+    "mode": "uuid"
+  },
+
+  "benchmark_score": {
+    "enabled": false,
+    "order": 40,
+    "mode": "uuid"
+  },
+
+  "game_score": {
+    "enabled": false,
+    "order": 41,
+    "mode": "uuid"
+  },
+
+  "performance_efficiency": {
+    "enabled": false,
+    "order": 42,
+    "mode": "uuid"
+  },
+
+  "power": {
+    "enabled": false,
+    "order": 43,
+    "mode": "uuid"
+  },
+
+  "comparison_aiagent": {
+    "enabled": false,
+    "order": 50,
+    "mode": "uuid"
+  },
+
+  "comparison_test": {
+    "enabled": false,
+    "order": 51,
+    "mode": "uuid"
+  },
+
+  "allowed_ips": {
+    "enabled": false
+  },
+
+  "server_config": {
+    "enabled": false
+  },
+
+  "sync_status": {
+    "enabled": false
+  },
+
+  "Test": {
+    "enabled": false
+  },
+
+  "TestItem": {
+    "enabled": false
+  }
+}
