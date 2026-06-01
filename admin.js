@@ -258,14 +258,7 @@ router.post(
           item.enabled;
       }
 
-      fs.writeFileSync(
-        TABLE_SYNC_CONFIG_PATH,
-        JSON.stringify(
-          config,
-          null,
-          2
-        )
-      );
+      saveTableSyncConfig(config);
 
       loadConfig();
 
@@ -387,6 +380,67 @@ const safeUUID = (v) => (
 );
 
 // =====================================
+// 🔥 Save Sync Error Log
+// =====================================
+async function saveSyncErrorLog({
+
+  tableName,
+  syncDirection,
+  actionType,
+  uuid,
+  errorMessage,
+  stackTrace,
+  payload
+
+}) {
+
+  try {
+
+    await pool.query(`
+      INSERT INTO sync_error_logs
+      (
+        role,
+        table_name,
+        sync_direction,
+        action_type,
+        uuid,
+        error_message,
+        stack_trace,
+        payload_json
+      )
+      VALUES
+      (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+
+      ROLE,
+
+      tableName || null,
+
+      syncDirection || null,
+
+      actionType || null,
+
+      uuid || null,
+
+      errorMessage || null,
+
+      stackTrace || null,
+
+      payload
+        ? JSON.stringify(payload)
+        : null
+    ]);
+
+  } catch (err) {
+
+    console.error(`
+[SYNC ERROR LOG SAVE FAIL]
+MESSAGE=${err.message}
+    `);
+  }
+}
+
+// =====================================
 // 🔥 Escape Column
 // =====================================
 function escapeColumn(column) {
@@ -397,7 +451,7 @@ function escapeColumn(column) {
 // =====================================
 // 🔥 Schema Validation
 // =====================================
-async function validateSyncSchema() {
+async function validateSyncSchema(syncTables = null) {
 
   console.log(
     "[SYNC] validate schema start"
@@ -407,6 +461,7 @@ async function validateSyncSchema() {
     loadTableSyncConfig();
 
   const SYNC_TABLES =
+    syncTables ||
     getSyncTables();
 
   for (const table of SYNC_TABLES) {
@@ -433,9 +488,25 @@ async function validateSyncSchema() {
         !columns.includes(requiredColumn)
       ) {
 
-        throw new Error(
-          `[SCHEMA ERROR] ${table} missing column: ${requiredColumn}`
-        );
+        const errMsg =
+          `[SCHEMA ERROR][${ROLE}] ${table} missing column: ${requiredColumn}`;
+
+        await saveSyncErrorLog({
+
+          tableName: table,
+
+          syncDirection: ROLE,
+
+          actionType: "SCHEMA_VALIDATION",
+
+          errorMessage: errMsg
+        });
+
+        const err = new Error(errMsg);
+
+        err.alreadyLogged = true;
+
+        throw err;
       }
     }
 
@@ -455,9 +526,25 @@ async function validateSyncSchema() {
           !columns.includes(key)
         ) {
 
-          throw new Error(
-            `[SCHEMA ERROR] ${table} missing business key: ${key}`
-          );
+          const errMsg =
+            `[SCHEMA ERROR][${ROLE}] ${table} missing business key: ${key}`;
+
+          await saveSyncErrorLog({
+
+            tableName: table,
+
+            syncDirection: ROLE,
+
+            actionType: "SCHEMA_VALIDATION",
+
+            errorMessage: errMsg
+          });
+
+          const err = new Error(errMsg);
+
+          err.alreadyLogged = true;
+
+          throw err;
         }
       }
     }
@@ -473,9 +560,25 @@ async function validateSyncSchema() {
         !columns.includes("uuid")
       ) {
 
-        throw new Error(
-          `[SCHEMA ERROR] ${table} missing uuid`
-        );
+        const errMsg =
+          `[SCHEMA ERROR][${ROLE}] ${table} missing uuid`;
+
+        await saveSyncErrorLog({
+
+          tableName: table,
+
+          syncDirection: ROLE,
+
+          actionType: "SCHEMA_VALIDATION",
+
+          errorMessage: errMsg
+        });
+
+        const err = new Error(errMsg);
+
+        err.alreadyLogged = true;
+
+        throw err;
       }
     }
   }
@@ -871,13 +974,30 @@ REASON=missing updated_at
       failCount++;
 
       console.error(`
-[ROW SYNC FAIL]
-TABLE=${table}
-MODE=${config.mode}
-UUID=${row.uuid || "N/A"}
-UPDATED_AT=${row.updated_at}
-MESSAGE=${err.message}
+    [ROW SYNC FAIL]
+    TABLE=${table}
+    MODE=${config.mode}
+    UUID=${row.uuid || "N/A"}
+    UPDATED_AT=${row.updated_at}
+    MESSAGE=${err.message}
       `);
+
+      await saveSyncErrorLog({
+
+        tableName: table,
+
+        syncDirection: ROLE,
+
+        actionType: "ROW_SYNC",
+
+        uuid: row.uuid || null,
+
+        errorMessage: err.message,
+
+        stackTrace: err.stack,
+
+        payload: row
+      });
 
       throw err;
     }
@@ -904,12 +1024,14 @@ STATUS=${failCount === 0 ? "SUCCESS" : "FAIL"}
 //   incremental sync
 // =====================================
 async function getChangedRows(
-  lastSyncMap
+  lastSyncMap,
+  syncTables = null
 ) {
 
   const result = {};
 
   const SYNC_TABLES =
+    syncTables ||
     getSyncTables();
 
   for (const table of SYNC_TABLES) {
@@ -951,6 +1073,19 @@ TABLE=${table}
 MESSAGE=${err.message}
       `);
 
+      await saveSyncErrorLog({
+
+        tableName: table,
+
+        syncDirection: ROLE,
+
+        actionType: "READ_CHANGED_ROWS",
+
+        errorMessage: err.message,
+
+        stackTrace: err.stack
+      });
+
       throw err;
     }
   }
@@ -967,10 +1102,15 @@ async function verifyRequest(req) {
     await loadConfig();
 
   const clientIP =
-    req.ip.replace(
-      "::ffff:",
+    (
+      req.headers["x-forwarded-for"] ||
+      req.ip ||
       ""
-    );
+    )
+      .toString()
+      .split(",")[0]
+      .trim()
+      .replace("::ffff:", "");
 
   const [rows] =
     await pool.query(`
@@ -1110,9 +1250,6 @@ router.post(
     let conn = null;
 
     try {
-
-      await validateSyncSchema();
-
       // =====================================
       // MASTER
       // - Handle sync request from Slave
@@ -1120,6 +1257,14 @@ router.post(
       // - Return Master changes
       // =====================================
       if (ROLE === "MASTER") {
+
+        const syncTables =
+          req.body.syncTables ||
+          getSyncTables();
+
+        await validateSyncSchema(
+          syncTables
+        );
 
         // =====================================
         // MASTER MANUAL SYNC
@@ -1146,14 +1291,16 @@ router.post(
         TARGET=${targetUrl}
           `);
 
+          const syncTables =
+            getSyncTables();
+
           const response =
             await axios.post(
               `${targetUrl}/api/admin/sync`,
               {
-                masterUrl:
-                  MASTER_URL,
-
-                internalSync: true
+                masterUrl: MASTER_URL,
+                internalSync: true,
+                syncTables
               },
               {
                 timeout: 300000,
@@ -1195,7 +1342,7 @@ router.post(
           loadTableSyncConfig();
 
         const SYNC_TABLES =
-          getSyncTables();
+          syncTables;
 
         // =====================================
         // Receive changed rows from Slave
@@ -1265,7 +1412,8 @@ router.post(
         // =====================================
         const syncData =
           await getChangedRows(
-            slaveLastSyncMap
+            slaveLastSyncMap,
+            syncTables
           );
 
         return res.json({
@@ -1285,6 +1433,14 @@ router.post(
       // - Receive latest changes from Master
       // =====================================
       if (ROLE === "SLAVE") {
+        
+        const syncTables =
+          req.body.syncTables ||
+          getSyncTables();
+
+        await validateSyncSchema(
+          syncTables
+        );
 
         const requestMasterUrl =
           req.body.masterUrl;
@@ -1294,7 +1450,7 @@ router.post(
           MASTER_URL;
 
         const SYNC_TABLES =
-          getSyncTables();
+          syncTables;
 
         const lastSyncMap = {};
 
@@ -1312,12 +1468,14 @@ router.post(
         // =====================================
         const localData =
           await getChangedRows(
-            lastSyncMap
+            lastSyncMap,
+            syncTables
           );
 
         const payloadObj = {
           data: localData,
           lastSyncMap,
+          syncTables,
           timestamp: Date.now()
         };
 
@@ -1452,6 +1610,24 @@ router.post(
         err
       );
 
+      if (!err.alreadyLogged) {
+
+        await saveSyncErrorLog({
+
+          tableName: "GLOBAL",
+
+          syncDirection: ROLE,
+
+          actionType: "SYNC",
+
+          errorMessage: err.message,
+
+          stackTrace: err.stack,
+
+          payload: req.body
+        });
+      }
+
       try {
 
         if (conn) {
@@ -1464,6 +1640,19 @@ router.post(
           "Rollback Error:",
           rollbackErr
         );
+
+        await saveSyncErrorLog({
+
+          tableName: "GLOBAL",
+
+          syncDirection: ROLE,
+
+          actionType: "ROLLBACK",
+
+          errorMessage: rollbackErr.message,
+
+          stackTrace: rollbackErr.stack
+        });
       }
 
       if (err.response) {
@@ -1496,6 +1685,71 @@ router.post(
           releaseErr
         );
       }
+    }
+  }
+);
+
+// =====================================
+// 🔥 Get Sync Error Logs
+// =====================================
+router.get(
+  "/sync-error-logs",
+  async (req, res) => {
+
+    try {
+
+      const limit =
+        Number(req.query.limit || 100);
+
+      const offset =
+        Number(req.query.offset || 0);
+
+      const [rows] =
+        await pool.query(`
+          SELECT *
+          FROM sync_error_logs
+          ORDER BY created_at DESC
+          LIMIT ? OFFSET ?
+        `, [
+          limit,
+          offset
+        ]);
+
+      res.json(rows);
+
+    } catch (err) {
+
+      console.error(err);
+
+      res.status(500).json({
+        error:
+          "failed to load sync error logs"
+      });
+    }
+  }
+);
+
+router.put(
+  "/sync-error-logs/:id/resolve",
+  async (req, res) => {
+
+    try {
+
+      await pool.query(`
+        UPDATE sync_error_logs
+        SET resolved = 1
+        WHERE id = ?
+      `, [req.params.id]);
+
+      res.json({
+        success: true
+      });
+
+    } catch (err) {
+
+      res.status(500).json({
+        error: err.message
+      });
     }
   }
 );
